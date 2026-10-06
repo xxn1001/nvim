@@ -15,7 +15,11 @@ return {
       window = {
         width = 30,
         mappings = {
+          -- 文件树窗口里 <space> 被禁用，leader 键不会触发；
+          -- 所以单独给文件树补一个 <leader>e = 关闭它（和外面的 toggle 行为一致）。
           ["<space>"] = "none",
+          ["<leader>e"] = "close_window",
+          -- <C-l> 由 config/keymaps.lua 统一映射为“聚焦右侧窗口”，即回到代码区
         },
       },
       add_blank_line_at_top = false,

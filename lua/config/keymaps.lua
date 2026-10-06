@@ -36,6 +36,23 @@ map("n", "<leader>wJ", "<C-w>J", { silent = true, desc = "窗口移到底部" })
 map("n", "<leader>wK", "<C-w>K", { silent = true, desc = "窗口移到顶部" })
 map("n", "<leader>wL", "<C-w>L", { silent = true, desc = "窗口移到右边" })
 
+-- 窗口之间切换焦点（文件树 / Trouble 面板 / 分屏 / 终端都用同一套）-------
+-- 在文件树或 Trouble 面板里按 <C-l> 就能回到代码区
+map("n", "<C-h>", "<C-w>h", { silent = true, desc = "聚焦左侧窗口" })
+map("n", "<C-j>", "<C-w>j", { silent = true, desc = "聚焦下方窗口" })
+map("n", "<C-k>", "<C-w>k", { silent = true, desc = "聚焦上方窗口" })
+map("n", "<C-l>", "<C-w>l", { silent = true, desc = "聚焦右侧窗口" })
+-- 在终端里也能直接跳到相邻窗口（不用先按 <Esc><Esc>）
+map("t", "<C-h>", "<C-\\><C-n><C-w>h", { silent = true, desc = "终端：聚焦左侧窗口" })
+map("t", "<C-j>", "<C-\\><C-n><C-w>j", { silent = true, desc = "终端：聚焦下方窗口" })
+map("t", "<C-k>", "<C-\\><C-n><C-w>k", { silent = true, desc = "终端：聚焦上方窗口" })
+map("t", "<C-l>", "<C-\\><C-n><C-w>l", { silent = true, desc = "终端：聚焦右侧窗口" })
+
+-- 说明：窗口切换的其它内置键（无需配置）
+--   <C-w>w  在所有窗口间循环
+--   <C-w>p  回到上一个窗口
+--   <C-w>c  关闭当前窗口      <C-w>o  只保留当前窗口
+
 -- 缓冲区 --------------------------------------------------------------------
 map("n", "<leader>bn", "<cmd>bnext<CR>", { silent = true, desc = "下一个缓冲区" })
 map("n", "<leader>bp", "<cmd>bprevious<CR>", { silent = true, desc = "上一个缓冲区" })
