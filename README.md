@@ -256,6 +256,22 @@ Markdown 浏览器预览首次使用前执行 `:MarkdownPreviewInstall`。
 先 `:TSInstall c cpp lua python rust` 手动补装 parser（master 分支的 `ensure_installed` 会在启动时自动补，
 首次装可能较慢），`:checkhealth nvim-treesitter` 可看状态。
 
+**Q：报错 `module 'nvim-treesitter.configs' not found`（或 `nvim-treesitter.config`）？**
+这是**本地插件目录的分支与本配置不一致**：
+
+| 分支 | 配置文件 | 正确写法 |
+| --- | --- | --- |
+| `master`（本配置锁定） | `lua/nvim-treesitter/configs.lua` | `require("nvim-treesitter.configs").setup(opts)` |
+| `main`（重写版） | `lua/nvim-treesitter/config.lua` | `require("nvim-treesitter.config").setup(opts)` |
+
+旧配置用的是 main 分支，`~/.local/share/nvim/lazy/nvim-treesitter` 可能还停在 main。
+执行 `:Lazy sync`（或 `:Lazy restore`）让它切到 master 即可；确认方式：
+
+```vim
+:lua print(vim.fn.system("git -C " .. vim.fn.stdpath("data") .. "/lazy/nvim-treesitter branch --show-current"))
+" 期望输出 master
+```
+
 **Q：LSP 没反应 / 没有补全？**
 `:Mason` 确认服务器已安装；`:LspInfo` 看当前 buffer 是否附着；`:checkhealth vim.lsp` 看具体报错。
 mason 的 bin 目录由 mason 自动加入 PATH，无需手动配置。
