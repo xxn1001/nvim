@@ -1,0 +1,9 @@
+# lazy.nvim 自己管理的插件/缓存（不入库）
+lazy-lock.json.bak
+*.log
+
+# 本地覆盖（不入库）
+lua/plugins/local.lua
+
+# 系统文件
+.DS_Store
