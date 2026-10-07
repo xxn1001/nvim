@@ -26,6 +26,37 @@
 -- 所以停在 main 上不会报错、但 treesitter 实际是死的。
 -- 如果你看到 “module 'nvim-treesitter.configs' not found”，说明本地插件目录还停在
 -- main（旧配置遗留），执行 :Lazy sync / :Lazy restore 切到 master 即可。
+
+--- 需要 `tree-sitter generate` 才能装的 grammar
+--- （对应 nvim-treesitter 的 parsers.lua 里 requires_generate_from_grammar = true）
+local PARSERS_NEEDING_GENERATE = {
+  latex = true,
+  mlir = true,
+  ocamllex = true,
+  scfg = true,
+  swift = true,
+  teal = true,
+  unison = true,
+}
+
+--- 本机 tree-sitter CLI 是否还能用 `generate --no-bindings`
+---
+--- 背景：nvim-treesitter 的 master 分支（官方已冻结）在 install.lua 里写死了
+---     tree-sitter generate --no-bindings ...
+--- 而 tree-sitter CLI 从 0.26 起移除了 --no-bindings（实测 0.26.13 / 0.27.0 都没有，
+--- 0.23 / 0.24 / 0.25 有）。于是装了新版 CLI 的机器每次启动都会看到：
+---     Error: nvim-treesitter[latex]: Error during "tree-sitter generate"
+---     error: unexpected argument '--no-bindings' found
+--- 注意：只有上面这几个 grammar 需要 generate，其它 parser 不受影响。
+---@return boolean
+local function ts_cli_supports_generate()
+  if vim.fn.executable("tree-sitter") == 0 then
+    return false
+  end
+  local help = vim.fn.system({ "tree-sitter", "generate", "--help" })
+  return vim.v.shell_error == 0 and help:find("--no-bindings", 1, true) ~= nil
+end
+
 return {
   {
     "nvim-treesitter/nvim-treesitter",
@@ -33,6 +64,15 @@ return {
     build = ":TSUpdate",
     event = { "BufReadPost", "BufNewFile" },
     config = function(_, opts)
+      -- 按本机 CLI 的实际能力裁剪 ensure_installed：
+      -- CLI 不支持 --no-bindings 时跳过需要 generate 的 parser（本列表里只有 latex），
+      -- 这样就不会每次启动都弹安装失败。想装它们请换回支持该参数的 CLI，见 README。
+      if type(opts.ensure_installed) == "table" and not ts_cli_supports_generate() then
+        opts.ensure_installed = vim.tbl_filter(function(parser)
+          return not PARSERS_NEEDING_GENERATE[parser]
+        end, opts.ensure_installed)
+      end
+
       -- 正常路径：master 分支，功能完整（parser 自动安装 + 高亮 + 缩进）
       local ok, configs = pcall(require, "nvim-treesitter.configs")
       if ok and type(configs.setup) == "function" then

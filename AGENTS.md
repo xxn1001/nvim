@@ -35,7 +35,7 @@ cd ~/.config/nvim
 nvim --headless "+luafile scripts/healthcheck.lua"
 ```
 
-共 16 项，覆盖本项目所有历史 bug 的回归（高亮、自动缩进、手动格式化、跳转返回、
+共 17 项，覆盖本项目所有历史 bug 的回归（高亮、自动缩进、手动格式化、跳转返回、
 treesitter 分支、snippet 跳转、键位齐全等）。退出码 `0` = 全部通过，`1` = 有失败项。
 
 ## 3. 已踩过的坑（**不要重犯**）
@@ -77,7 +77,16 @@ treesitter 分支、snippet 跳转、键位齐全等）。退出码 `0` = 全部
 8. **LSP 动作要有反馈**：telescope 的 call hierarchy 在「不支持 / 无结果」时完全静默，
    用户会以为键坏了。统一用 `util/lsp.lua` 的 `guard()` / `call_hierarchy()` 包一层提示。
 9. **`gt` 是内置的「下一个标签页」**，不要拿去做 LSP 跳转（类型定义在 `<leader>ct`）。
-10. **远端可能有人工提交**：push 前先 `git fetch`，`git rebase origin/main` 后再 push，
+10. **tree-sitter CLI >= 0.26 移除了 `generate --no-bindings`**
+   实测：0.23 / 0.24 / 0.25 支持，0.26.13 / 0.27.0 不支持；而 nvim-treesitter 的
+   master 分支（官方已冻结，不会再修）在 `install.lua` 里写死了这个参数 →
+   装了新版 CLI 的机器每次启动都会重试安装 `latex` 并弹
+   `Error: nvim-treesitter[latex]: Error during "tree-sitter generate"`。
+   只影响 `requires_generate_from_grammar` 的 grammar
+   （latex / mlir / ocamllex / scfg / swift / teal / unison，本配置里只有 latex）。
+   `plugins/treesitter.lua` 用 `ts_cli_supports_generate()` 检测后动态裁剪
+   `ensure_installed`，healthcheck 第 9 项做回归保护。想真装 latex 需要 CLI 0.25.x。
+11. **远端可能有人工提交**：push 前先 `git fetch`，`git rebase origin/main` 后再 push，
     **禁止 force push**（会毁掉用户自己的提交）。
 
 ## 4. 怎么验证（沙箱套路）

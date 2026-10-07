@@ -45,7 +45,7 @@ Nerd Font（图标显示）：`brew install --cask font-jetbrains-mono-nerd-font
 ├── lazy-lock.json              # 插件版本锁（入库，保证换机可复现）
 ├── AGENTS.md                   # ★ 给「以后来维护的 agent / 人」的维护手册（坑 + 验证方法）
 ├── scripts/
-│   └── healthcheck.lua         # ★ 一键自检（16 项，覆盖所有历史 bug 的回归）
+│   └── healthcheck.lua         # ★ 一键自检（17 项，覆盖所有历史 bug 的回归）
 └── lua
     ├── config/                 # 纯设置与逻辑
     │   ├── globals.lua         # leader 等全局变量
@@ -312,6 +312,30 @@ module 名取决于**插件所在的分支**，与 nvim 版本无关：
 
 本配置已经做了兜底：万一插件仍在 main 分支，启动时会用 `vim.treesitter.start()` 打开高亮，
 并弹出一条警告提示你切分支（不会像以前那样悄无声息）。
+
+**Q：启动时弹窗报 `nvim-treesitter[latex]: Error during "tree-sitter generate"` / `unexpected argument '--no-bindings'`？**
+这是 tree-sitter CLI 与 nvim-treesitter（master 分支，官方已冻结）的版本不匹配：
+
+| tree-sitter CLI | `generate --no-bindings` |
+| --- | --- |
+| 0.23 / 0.24 / 0.25 | ✅ 支持 |
+| **0.26 / 0.27（brew 现在装的就是）** | ❌ 已移除 |
+
+master 分支的 `install.lua` 里写死了 `tree-sitter generate --no-bindings`，
+而**只有需要 `generate` 的 grammar 会受影响**（本配置的列表里只有 `latex`），
+其它 37 个 parser 与该参数无关。
+
+本配置已经自适应：`plugins/treesitter.lua` 会检测本机 CLI 是否支持该参数，
+不支持时自动把 `latex` 从 `ensure_installed` 里剔除 —— **不会再每次启动弹错**。
+如果你确实要用 LaTeX：
+
+```sh
+brew uninstall tree-sitter-cli                  # 0.26/0.27 不行
+cargo install tree-sitter-cli --version 0.25.10 # 或下载官方 release 里的 0.25.x 二进制
+tree-sitter generate --help | grep no-bindings  # 有输出即 OK
+```
+
+然后 `:TSInstall latex` 即可（配置里的 latex 会自动重新生效）。
 
 **Q：LSP 没反应 / 没有补全？**
 `:Mason` 确认服务器已安装；`:LspInfo` 看当前 buffer 是否附着；`:checkhealth vim.lsp` 看具体报错。

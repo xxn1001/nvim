@@ -31,8 +31,10 @@ end
 
 -- 0. 启动期报错 ---------------------------------------------------------------
 local messages = vim.fn.execute("messages")
-check("启动无报错信息（E5108 / module not found 等）", not messages:match("E%d+:") and not messages:match("not found"),
-  "messages 里出现错误：" .. messages:gsub("\n", " "):sub(1, 160))
+local msg_bad = messages:match("E%d+:") or messages:match("not found")
+  or messages:match("unexpected argument") or messages:match("Error during")
+check("启动无报错信息（E5108 / module not found / parser 安装失败等）", not msg_bad,
+  "messages 里出现错误：" .. messages:gsub("\n", " "):sub(1, 200))
 
 -- 1. 插件 ----------------------------------------------------------------
 local names = {}
@@ -141,7 +143,33 @@ end)(), "plugins/completion.lua 应以 cmp.mapping.preset.insert() 为基底")
 check("foldexpr 未引用 vim.ufo（nvim-ufo 不提供该函数）", not vim.wo.foldexpr:match("vim%.ufo"),
   "当前 foldexpr=" .. vim.wo.foldexpr .. "（options.lua 里删掉 foldmethod=expr / foldexpr）")
 
--- 9. 关键键位 ----------------------------------------------------------------
+-- 9. tree-sitter CLI 能力与 ensure_installed 是否一致 ------------------------
+-- tree-sitter >= 0.26 移除了 `generate --no-bindings`，而 nvim-treesitter master 仍用它；
+-- 配置会在 CLI 不支持时自动跳过需要 generate 的 parser（本列表里是 latex），
+-- 避免每次启动都弹安装失败。这里做回归保护。
+local ts_cli_supports_generate = (function()
+  if vim.fn.executable("tree-sitter") == 0 then
+    return false
+  end
+  local help = vim.fn.system({ "tree-sitter", "generate", "--help" })
+  return vim.v.shell_error == 0 and help:find("--no-bindings", 1, true) ~= nil
+end)()
+local need_generate = {
+  latex = true, mlir = true, ocamllex = true, scfg = true, swift = true, teal = true, unison = true,
+}
+local unsupported = {}
+local ok_ens, ens = pcall(function()
+  return require("nvim-treesitter.configs").get_ensure_installed_parsers()
+end)
+for _, parser in ipairs(ok_ens and ens or {}) do
+  if need_generate[parser] and not ts_cli_supports_generate then
+    unsupported[#unsupported + 1] = parser
+  end
+end
+check("ensure_installed 已按本地 CLI 能力裁剪（不会弹 parser 安装失败）", #unsupported == 0,
+  "这些 parser 需要 tree-sitter generate，但本地 CLI 不支持 --no-bindings: " .. table.concat(unsupported, ", "))
+
+-- 10. 关键键位 ---------------------------------------------------------------
 local keys = {
   "<leader>cf", "<leader>sh", "<leader>co", "<leader>ct",
   "<leader>ce", "<leader>cd", "<leader>cG", "<leader>ci", "<leader>cw",
