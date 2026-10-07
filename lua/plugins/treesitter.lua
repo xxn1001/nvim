@@ -15,14 +15,17 @@
 -- 于是 opts 被静默丢弃 —— 实测 highlight.enable = false、ensure_installed = {}。
 -- 正确的入口是 nvim-treesitter.configs.setup(opts)。
 --
--- ⚠️ 注意 module 名：master 分支是 configs（复数），main 分支才是 config（单数）。
--- 两个分支的文件名实测如下：
+-- ⚠️ 注意 module 名取决于**插件所在的分支**（不是 nvim 版本）：
 --   master: lua/nvim-treesitter/configs.lua  存在，config.lua   不存在
+--           → require("nvim-treesitter.configs").setup(opts)  ← 本配置走这条
 --   main  : lua/nvim-treesitter/config.lua   存在，configs.lua 不存在
--- 所以 branch = "master" 时必须写 configs；写成 config 会 module not found，
--- 结果是语法高亮全丢、parser 不安装。
--- 如果你看到 “module 'nvim-treesitter.configs' not found”，多半是本地插件目录
--- 还停留在 main 分支（旧配置遗留），执行 :Lazy sync（或 :Lazy restore）让它切到 master。
+--           → require("nvim-treesitter.config").setup(opts)
+-- 两个分支的 setup 语义完全不同：main 的 config.setup() 源码里只处理 install_dir
+-- 一个字段，ensure_installed / highlight / indent 会被静默忽略，而且 main 没有
+-- highlight 模块（高亮要自己 FileType → vim.treesitter.start()），
+-- 所以停在 main 上不会报错、但 treesitter 实际是死的。
+-- 如果你看到 “module 'nvim-treesitter.configs' not found”，说明本地插件目录还停在
+-- main（旧配置遗留），执行 :Lazy sync / :Lazy restore 切到 master 即可。
 return {
   {
     "nvim-treesitter/nvim-treesitter",
@@ -30,7 +33,35 @@ return {
     build = ":TSUpdate",
     event = { "BufReadPost", "BufNewFile" },
     config = function(_, opts)
-      require("nvim-treesitter.configs").setup(opts)
+      -- 正常路径：master 分支，功能完整（parser 自动安装 + 高亮 + 缩进）
+      local ok, configs = pcall(require, "nvim-treesitter.configs")
+      if ok and type(configs.setup) == "function" then
+        configs.setup(opts)
+        return
+      end
+
+      -- 兜底路径：插件目录停在 main 分支时，至少把高亮打开，并明确告知怎么修，
+      -- 避免出现“没有报错但语法高亮全没了”这种最难排查的状态。
+      local ok_main, main = pcall(require, "nvim-treesitter.config")
+      if ok_main and type(main.setup) == "function" then
+        main.setup({})
+        vim.api.nvim_create_autocmd("FileType", {
+          group = vim.api.nvim_create_augroup("config.treesitter_main_fallback", { clear = true }),
+          desc = "main 分支兜底：开启 treesitter 高亮",
+          callback = function()
+            pcall(vim.treesitter.start)
+          end,
+        })
+        vim.notify(
+          "nvim-treesitter 当前处于 main 分支，但本配置按 master 编写：\n"
+            .. "ensure_installed（parser 自动安装）和缩进不会生效。\n"
+            .. "请执行 :Lazy sync 或 :Lazy restore 切回 master；详见 README 常见问题。",
+          vim.log.levels.WARN
+        )
+        return
+      end
+
+      vim.notify("nvim-treesitter 未安装或结构异常，请执行 :Lazy sync", vim.log.levels.ERROR)
     end,
     opts = {
       auto_install = false,

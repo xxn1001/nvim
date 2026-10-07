@@ -92,8 +92,12 @@ Nerd Font（图标显示）：`brew install --cask font-jetbrains-mono-nerd-font
 | `gt` / `gT` | 下一个 / 上一个标签页 |
 | `<leader><tab><tab>` | 新建标签页 |
 | `<leader><tab>d` / `o` / `l` / `h` | 关闭 / 只留当前 / 下一个 / 上一个标签页 |
+| `<leader>wv` / `<leader>ws` | **垂直分屏（左右）/ 水平分屏（上下）** |
+| `<leader>wd` / `<leader>wo` | 关闭当前窗口 / 只保留当前窗口 |
+| `<leader>ww` / `<leader>w=` | 切到下一个窗口 / 所有窗口等宽等高 |
+| `<leader>wH` `wJ` `wK` `wL` | 把**当前窗口**挪到最 左/下/上/右（不是分屏；只有一个窗口时会提示先分屏） |
 | `<C-Up>` `<C-Down>` `<C-Left>` `<C-Right>` | 调整窗口大小 |
-| `<leader>wH` `wJ` `wK` `wL` | 把窗口移到 左/下/上/右 |
+| `<C-h>` `<C-j>` `<C-k>` `<C-l>` | 聚焦 左/下/上/右 窗口（详见 3.6） |
 | `<leader>qs` / `<leader>ql` / `<leader>qd` | 恢复会话 / 恢复上次会话 / 本次不保存会话 |
 | `<leader>fp` | 切换项目 |
 | `<leader><tab>` 等 | 见 which-key 弹窗 |
@@ -257,20 +261,24 @@ Markdown 浏览器预览首次使用前执行 `:MarkdownPreviewInstall`。
 首次装可能较慢），`:checkhealth nvim-treesitter` 可看状态。
 
 **Q：报错 `module 'nvim-treesitter.configs' not found`（或 `nvim-treesitter.config`）？**
-这是**本地插件目录的分支与本配置不一致**：
+module 名取决于**插件所在的分支**，与 nvim 版本无关：
 
-| 分支 | 配置文件 | 正确写法 |
-| --- | --- | --- |
-| `master`（本配置锁定） | `lua/nvim-treesitter/configs.lua` | `require("nvim-treesitter.configs").setup(opts)` |
-| `main`（重写版） | `lua/nvim-treesitter/config.lua` | `require("nvim-treesitter.config").setup(opts)` |
+| 分支 | 实际文件 | 入口函数 | 说明 |
+| --- | --- | --- | --- |
+| `master`（本配置 `branch = "master"` 锁定） | `lua/nvim-treesitter/configs.lua` | `require("nvim-treesitter.configs").setup(opts)` | parser 自动安装 + 高亮 + 缩进，功能完整 |
+| `main`（官方重写版） | `lua/nvim-treesitter/config.lua` | `require("nvim-treesitter.config").setup(opts)` | 其 `setup()` 源码里**只处理 `install_dir`**，`ensure_installed`/`highlight`/`indent` 会被静默忽略；main 也没有 `highlight` 模块，高亮要自己 `FileType → vim.treesitter.start()` |
 
-旧配置用的是 main 分支，`~/.local/share/nvim/lazy/nvim-treesitter` 可能还停在 main。
-执行 `:Lazy sync`（或 `:Lazy restore`）让它切到 master 即可；确认方式：
+⚠️ 所以停在 main 分支时**不会报错，但 treesitter 实际是死的**（parser 不装、高亮不开）—— 这是最难排查的状态。
+旧配置锁的就是 main，`~/.local/share/nvim/lazy/nvim-treesitter` 很可能还停在 main。执行
+`:Lazy sync`（或 `:Lazy restore`）切到 master；确认方式：
 
 ```vim
 :lua print(vim.fn.system("git -C " .. vim.fn.stdpath("data") .. "/lazy/nvim-treesitter branch --show-current"))
 " 期望输出 master
 ```
+
+本配置已经做了兜底：万一插件仍在 main 分支，启动时会用 `vim.treesitter.start()` 打开高亮，
+并弹出一条警告提示你切分支（不会像以前那样悄无声息）。
 
 **Q：LSP 没反应 / 没有补全？**
 `:Mason` 确认服务器已安装；`:LspInfo` 看当前 buffer 是否附着；`:checkhealth vim.lsp` 看具体报错。

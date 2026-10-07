@@ -26,15 +26,40 @@ map("v", "<A-k>", ":m '<-2<CR>gv=gv", { silent = true, desc = "向上移动选�
 map({ "i", "n" }, "<C-a>", "<Cmd>normal! ggVG<CR>", { silent = true, desc = "全选" })
 
 -- 窗口 ----------------------------------------------------------------------
+-- 分屏 / 关闭 / 循环切换
+map("n", "<leader>wv", "<C-w>v", { desc = "垂直分屏（左右）" })
+map("n", "<leader>ws", "<C-w>s", { desc = "水平分屏（上下）" })
+map("n", "<leader>wd", "<C-w>c", { desc = "关闭当前窗口" })
+map("n", "<leader>wo", "<C-w>o", { desc = "只保留当前窗口" })
+map("n", "<leader>ww", "<C-w>w", { desc = "切到下一个窗口" })
+map("n", "<leader>w=", "<C-w>=", { desc = "所有窗口等宽等高" })
+
+-- 调整窗口大小
 map("n", "<C-Up>", "<cmd>resize +2<cr>", { desc = "增加窗口高度" })
 map("n", "<C-Down>", "<cmd>resize -2<cr>", { desc = "减少窗口高度" })
 map("n", "<C-Left>", "<cmd>vertical resize -2<cr>", { desc = "减少窗口宽度" })
 map("n", "<C-Right>", "<cmd>vertical resize +2<cr>", { desc = "增加窗口宽度" })
 
-map("n", "<leader>wH", "<C-w>H", { silent = true, desc = "窗口移到左边" })
-map("n", "<leader>wJ", "<C-w>J", { silent = true, desc = "窗口移到底部" })
-map("n", "<leader>wK", "<C-w>K", { silent = true, desc = "窗口移到顶部" })
-map("n", "<leader>wL", "<C-w>L", { silent = true, desc = "窗口移到右边" })
+-- 移动窗口：把当前窗口挪到最 左/下/上/右（不是分屏！）
+-- 注意：<C-w>H 这类命令在只有一个窗口时是“静默无效果”的，很容易被误认为坏掉了，
+-- 所以这里加一句提示，引导先分屏。
+---@param cmd string wincmd 的参数，如 "H"
+---@param label string 提示语
+---@return fun()
+local function move_window(cmd, label)
+  return function()
+    if #vim.api.nvim_tabpage_list_wins(0) < 2 then
+      vim.notify(label .. "：当前只有一个窗口（先按 <leader>wv 或 <leader>ws 分屏）", vim.log.levels.INFO)
+      return
+    end
+    vim.cmd("wincmd " .. cmd)
+  end
+end
+
+map("n", "<leader>wH", move_window("H", "窗口移到最左边"), { desc = "窗口移到最左边" })
+map("n", "<leader>wJ", move_window("J", "窗口移到最底部"), { desc = "窗口移到最底部" })
+map("n", "<leader>wK", move_window("K", "窗口移到最顶部"), { desc = "窗口移到最顶部" })
+map("n", "<leader>wL", move_window("L", "窗口移到最右边"), { desc = "窗口移到最右边" })
 
 -- 窗口之间切换焦点（文件树 / Trouble 面板 / 分屏 / 终端都用同一套）-------
 -- 在文件树或 Trouble 面板里按 <C-l> 就能回到代码区
