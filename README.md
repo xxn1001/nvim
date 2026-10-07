@@ -207,6 +207,7 @@ Nerd Font（图标显示）：`brew install --cask font-jetbrains-mono-nerd-font
 | 2 | 跳转后回不去，只能手动翻 | 其实 `<C-o>` 可用，但原实现没写 tagstack（`<C-t>` 用不了），且键位说明缺失 | `util/jump.lua` 同时写 jumplist + tagstack；README 明确写出 `<C-o>`/`<C-i>`/`<C-t>` |
 | 3 | `<leader>ce/cd/cG/cl/c[/c]` 感觉有 bug | 这些键本身是好的，但在「没有 LSP 客户端 / server 不支持该能力 / 没有结果」时**完全静默**；`<leader>cl` 用的 Trouble `lsp` 聚合模式一次发 7 类请求、跟着 CursorHold 刷新，大文件会卡；`gt` 被占用导致标签页导航失效 | `util/lsp.lua` 统一加提示；`cl` 改为只查引用（聚合模式挪到 `cL`）；`gt` 还给标签页，类型定义改到 `<leader>ct` |
 | 4 | 每次 `:w` / `:wq` 都自动格式化，改坏代码 | `conform.nvim` 的 `format_on_save` | 去掉 `format_on_save`，改为 `<leader>cf` 主动触发（可视模式支持选区） |
+| 5 | **按 `<CR>` 不自动缩进**（C/C++ 尤其明显，每行都顶格） | treesitter 的 indent 模块把 `indentexpr` 换成 `nvim_treesitter#indent()`，而 master 分支在新版 nvim 上解析 c/cpp 的 `indents.scm`（用到 `#not-kind-eq?` 谓词）时报 `query_predicates.lua:106: attempt to call method 'type' (a nil value)` → `indentexpr` 抛异常 → 缩进算成 0 | `lua/plugins/treesitter.lua` 里 `indent = { enable = false }`，交给 Neovim 内置 indent 脚本（`indent/c.vim`+cindent、python、go、lua…）。实测逐行缩进与老配置完全一致（C++ 0/4/8/12…） |
 
 另外顺手修掉的问题：
 
@@ -218,7 +219,11 @@ Nerd Font（图标显示）：`brew install --cask font-jetbrains-mono-nerd-font
      于是 `ensure_installed` / `highlight.enable` / `indent.enable` 被静默丢弃
      （实测：`get_ensure_installed_parsers() = {}`、`highlight.enable = false`、parser 数 = 0）。
   现在：显式 `branch = "master"` + 显式 `config = function(_, opts) require("nvim-treesitter.configs").setup(opts) end`，
-  语法高亮、缩进、折叠、彩虹括号一并恢复。安装 parser 需要 `tree-sitter` CLI（`brew install tree-sitter-cli`）。
+  语法高亮、折叠、彩虹括号一并恢复（**缩进模块仍故意关闭**，原因见上表第 5 条）。
+  安装 parser 需要 `tree-sitter` CLI（`brew install tree-sitter-cli`）。
+- `config/autocmds.lua` 里两处 FileType autocommand 用了同一个 `augroup(..., { clear = true })`，
+  第二次 `clear` 会把第一处删掉 → `formatoptions` 的 `c`/`r` 没被移除（注释会自动续行）。
+  现在 group 只创建一次，两处共用。
 - `nvim-cmp` 没把补全能力（snippet）发给 LSP 服务器 → 已加 `cmp_nvim_lsp.default_capabilities()`。
 - telescope 的 `load_extension("fzf")` 没做保护，fzf-native 编译失败会连带
   `live_grep_args` / `projects` / `todo-comments` 全失效 → 改为逐个 pcall 并提示。
@@ -259,6 +264,22 @@ Markdown 浏览器预览首次使用前执行 `:MarkdownPreviewInstall`。
 **Q：打开文件后没有语法高亮？**
 先 `:TSInstall c cpp lua python rust` 手动补装 parser（master 分支的 `ensure_installed` 会在启动时自动补，
 首次装可能较慢），`:checkhealth nvim-treesitter` 可看状态。
+
+**Q：按 `<CR>` 不自动缩进 / 缩进不对？**
+本配置**故意关闭了 treesitter 的缩进模块**（`lua/plugins/treesitter.lua` 里 `indent = { enable = false }`）。
+原因：开启后它会把 `indentexpr` 换成 `nvim_treesitter#indent()`，而 master 分支解析 c/cpp 的
+`indents.scm`（含 `#not-kind-eq?` 谓词）时在新版 nvim 上抛
+`query_predicates.lua:106: attempt to call method 'type' (a nil value)`，异常导致缩进直接算成 0 ——
+表现就是"每行 Enter 后都顶格"。关掉后改用 Neovim 自带的 indent 脚本（cindent / python / go / lua…），
+行为与老配置逐行一致。
+
+自检方式（进入某个 buffer 后）：
+
+```vim
+:lua print(vim.bo.filetype, "indentexpr=", vim.bo.indentexpr, "cindent=", vim.bo.cindent)
+" C/C++ 期望： indentexpr= (空)  cindent=true
+" 若看到 indentexpr=nvim_treesitter#indent()，说明缩进模块又被打开了
+```
 
 **Q：报错 `module 'nvim-treesitter.configs' not found`（或 `nvim-treesitter.config`）？**
 module 名取决于**插件所在的分支**，与 nvim 版本无关：

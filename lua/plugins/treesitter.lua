@@ -79,7 +79,23 @@ return {
         "query",
       },
       highlight = { enable = true },
-      indent = { enable = true },
+
+      -- ⚠️ 缩进模块【故意关闭】，这是修复「按 Enter 不自动缩进」的关键：
+      --
+      -- 打开它（enable = true）后，nvim-treesitter 会把 indentexpr 换成
+      -- nvim_treesitter#indent()，而 master 分支在当前 nvim 上对 C/C++ 会直接报错：
+      --   nvim-treesitter/query_predicates.lua:106:
+      --     attempt to call method 'type' (a nil value)
+      --   ← c/cpp 的 indents.scm 用了 #not-kind-eq? 谓词，
+      --     新版 nvim 对量化捕获返回的是节点列表，插件却当成单个节点调用 :type()
+      -- indentexpr 抛异常 → Vim 得到 0 → 每行按 Enter 都顶格（实测 C++ 全为 0，
+      -- 而内置 indent 脚本给出的是 4/8/12 正确值）。
+      -- 受影响语言：c cpp ecma groovy ispc ocaml r swift 等。
+      --
+      -- 关掉之后交给 Neovim 自带的 indent 脚本（indent/c.vim + cindent、python、go、
+      -- lua、rust、typescript…），表现稳定，也是原配置实际使用的缩进方式。
+      -- 想重新试验：把下面 enable 改成 true，并确认对应语言不再报错。
+      indent = { enable = false },
     },
   },
   {
