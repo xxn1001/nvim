@@ -1,5 +1,9 @@
 -- 折叠（原 coding/nixvim/ufo.nix）
 -- 变化点：setupLspCapabilities 移到了 lsp.lua 的 vim.lsp.config("*") 中
+--
+-- 说明：options.lua 里曾经设置过 foldmethod=expr + foldexpr=v:lua.vim.ufo.foldexpr()，
+-- 但 nvim-ufo 并不提供 vim.ufo（源码里没有 foldexpr），那会导致每次算折叠都报 E5108。
+-- 现已删除，折叠完全交给 ufo 自己接管，因此这里可以继续懒加载。
 return {
   {
     "kevinhwang91/nvim-ufo",

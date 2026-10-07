@@ -37,9 +37,14 @@ vim.opt.spell = true
 vim.opt.spelllang = { "en_us", "cjk" }
 vim.opt.spellsuggest = "best,4"
 
--- 折叠（由 nvim-ufo 提供 fold expression）----------------------------------
-vim.opt.foldmethod = "expr"
-vim.opt.foldexpr = "v:lua.vim.ufo.foldexpr()"
+-- 折叠（由 nvim-ufo 接管）---------------------------------------------------
+-- 【修复】不要设置 foldmethod = "expr" / foldexpr = "v:lua.vim.ufo.foldexpr()"！
+-- nvim-ufo 的源码里既没有 vim.ufo 这个全局，也没有 foldexpr 函数，
+-- 那样写会在每次计算折叠时报：
+--     E5108: Lua: attempt to index field 'ufo' (a nil value)
+-- 这行是从老配置（nixvim 时代的旧版 ufo）继承下来的死代码。
+-- ufo 官方最小配置只需要 foldlevel / foldlevelstart / foldenable，
+-- 折叠方法由插件自己在 setup 时接管。
 vim.opt.foldenable = true
 vim.opt.foldlevelstart = 99
 

@@ -43,6 +43,9 @@ Nerd Font（图标显示）：`brew install --cask font-jetbrains-mono-nerd-font
 .
 ├── init.lua                    # 入口：装 lazy.nvim → 加载 config/ → 加载 plugins/
 ├── lazy-lock.json              # 插件版本锁（入库，保证换机可复现）
+├── AGENTS.md                   # ★ 给「以后来维护的 agent / 人」的维护手册（坑 + 验证方法）
+├── scripts/
+│   └── healthcheck.lua         # ★ 一键自检（16 项，覆盖所有历史 bug 的回归）
 └── lua
     ├── config/                 # 纯设置与逻辑
     │   ├── globals.lua         # leader 等全局变量
@@ -58,6 +61,13 @@ Nerd Font（图标显示）：`brew install --cask font-jetbrains-mono-nerd-font
         ├── jump.lua            # 去重跳转（jumplist + tagstack）
         ├── lsp.lua             # LSP 动作封装（无 LSP / 无结果时的提示）
         └── format.lua          # conform 手动格式化
+```
+
+改完配置后自检（改坏了会明确告诉你是哪一项）：
+
+```sh
+cd ~/.config/nvim
+nvim --headless "+luafile scripts/healthcheck.lua"
 ```
 
 维护速查：
@@ -208,6 +218,8 @@ Nerd Font（图标显示）：`brew install --cask font-jetbrains-mono-nerd-font
 | 3 | `<leader>ce/cd/cG/cl/c[/c]` 感觉有 bug | 这些键本身是好的，但在「没有 LSP 客户端 / server 不支持该能力 / 没有结果」时**完全静默**；`<leader>cl` 用的 Trouble `lsp` 聚合模式一次发 7 类请求、跟着 CursorHold 刷新，大文件会卡；`gt` 被占用导致标签页导航失效 | `util/lsp.lua` 统一加提示；`cl` 改为只查引用（聚合模式挪到 `cL`）；`gt` 还给标签页，类型定义改到 `<leader>ct` |
 | 4 | 每次 `:w` / `:wq` 都自动格式化，改坏代码 | `conform.nvim` 的 `format_on_save` | 去掉 `format_on_save`，改为 `<leader>cf` 主动触发（可视模式支持选区） |
 | 5 | **按 `<CR>` 不自动缩进**（C/C++ 尤其明显，每行都顶格） | treesitter 的 indent 模块把 `indentexpr` 换成 `nvim_treesitter#indent()`，而 master 分支在新版 nvim 上解析 c/cpp 的 `indents.scm`（用到 `#not-kind-eq?` 谓词）时报 `query_predicates.lua:106: attempt to call method 'type' (a nil value)` → `indentexpr` 抛异常 → 缩进算成 0 | `lua/plugins/treesitter.lua` 里 `indent = { enable = false }`，交给 Neovim 内置 indent 脚本（`indent/c.vim`+cindent、python、go、lua…）。实测逐行缩进与老配置完全一致（C++ 0/4/8/12…） |
+| 6 | 函数补全后**残留的形参删不掉**（如 `kill(a, int sig)` 里的 `int sig`） | clangd 的函数补全带 snippet 占位符 `kill(${1:__pid_t pid}, ${2:int sig})`，**占位符是真实文本**；而配置里 `<Tab>` 只映射到 cmp 的「选下一个候选」，菜单关掉后 cmp 会 fallback 成插入 Tab —— 没有任何键能跳到下一个占位符 | `lua/plugins/completion.lua`：`<Tab>`/`<S-Tab>` 变为「补全菜单 → snippet 占位符跳转 → 主动补全 → 原生行为」，并以 `cmp.mapping.preset.insert()` 为基底（顺带找回 `<C-n>/<C-p>/<C-y>/<C-e>`）。活体实测：`kill(a, int sig)` 按 `<Tab>` → 选中 `int sig` → 输入 `b` → `kill(a, b)` |
+| 7 | 每次算折叠都报 `E5108: attempt to index field 'ufo'` | 老配置（nixvim 时代旧版 ufo）留下的 `foldmethod=expr` + `foldexpr=v:lua.vim.ufo.foldexpr()`；而 nvim-ufo 源码里**既没有 `vim.ufo` 也没有 `foldexpr`**，它靠 `foldtext` 接管折叠 | `config/options.lua` 删除这两行（ufo 官方最小配置只需要 `foldlevel`/`foldlevelstart`/`foldenable`），实测 `foldexpr` 恢复默认、`foldmethod=manual`、`zR`/`zM` 正常、无报错 |
 
 另外顺手修掉的问题：
 
@@ -304,6 +316,16 @@ module 名取决于**插件所在的分支**，与 nvim 版本无关：
 **Q：LSP 没反应 / 没有补全？**
 `:Mason` 确认服务器已安装；`:LspInfo` 看当前 buffer 是否附着；`:checkhealth vim.lsp` 看具体报错。
 mason 的 bin 目录由 mason 自动加入 PATH，无需手动配置。
+
+**Q：函数补全后括号里残留形参（例如 `kill(a, int sig)` 里的 `int sig`）删不掉？**
+这是 clangd 的 snippet 占位符（`kill(${1:__pid_t pid}, ${2:int sig})`），占位符是真实文本。
+正确用法：**填完第一个参数后按 `<Tab>`** 跳到下一个占位符（内容会被选中），直接输入即可替换；
+`<S-Tab>` 往回跳。`printf` 只有一个形参，所以只有它"看起来没问题"。
+
+| 现象 | 原因 | 处理 |
+| --- | --- | --- |
+| 想完全不出现形参占位符，只要 `kill()` 并把光标停进括号 | `--function-arg-placeholders` | 配置里 clangd 已经是 `false`；若仍出现，说明本地 clangd 版本不认这个参数或有 `.clangd`/项目配置覆盖，用 `:LspInfo` 看实际 cmdline，或在项目根 `.clangd` 里写 `Completion: { ArgumentPlaceholders: false }` |
+| `<Tab>` 不跳转 | 旧配置没有 snippet 跳转映射 | 已修（`lua/plugins/completion.lua`），用 `scripts/healthcheck.lua` 可回归验证 |
 
 **Q：格式化没反应？**
 `<leader>cf` 依赖对应语言的 formatter 在 PATH 中；`:ConformInfo` 会列出当前 buffer 用到的
