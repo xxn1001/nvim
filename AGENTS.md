@@ -35,8 +35,8 @@ cd ~/.config/nvim
 nvim --headless "+luafile scripts/healthcheck.lua"
 ```
 
-共 17 项，覆盖本项目所有历史 bug 的回归（高亮、自动缩进、手动格式化、跳转返回、
-treesitter 分支、snippet 跳转、键位齐全等）。退出码 `0` = 全部通过，`1` = 有失败项。
+共 20 项，覆盖本项目所有历史 bug 的回归（高亮、自动缩进、手动格式化、跳转返回、treesitter 分支与 markdown 注入、
+snippet 跳转、插件/nvim API 清单、键位齐全等）。退出码 `0` = 全部通过，`1` = 有失败项。
 
 ## 3. 已踩过的坑（**不要重犯**）
 
@@ -44,19 +44,33 @@ treesitter 分支、snippet 跳转、键位齐全等）。退出码 `0` = 全部
    nvim-ufo 源码里既没有 `vim.ufo` 也没有 `foldexpr` 函数 → 每次计算折叠都报
    `E5108: attempt to index field 'ufo' (a nil value)`。ufo 是靠 `foldtext` 接管的，
    官方最小配置只需要 `foldlevel` / `foldlevelstart` / `foldenable`。
-2. **nvim-treesitter 必须 `branch = "master"` + 显式 `config`**
-   - 默认分支已是重写版 `main`：模块名是 `nvim-treesitter.config`（单数），
-     而 master 是 `nvim-treesitter.configs`（复数）；写错就 module not found。
-   - master 的 `require("nvim-treesitter").setup(opts)` **不接收参数**（只注册 `:TSInstall` 等命令）。
-     只写 `opts` 时 lazy 会调它 → `ensure_installed` / `highlight` / `indent` **被静默丢弃**
-     （实测 `get_ensure_installed_parsers() = {}`、parser 数 0）。
-   - 正确写法：`config = function(_, opts) require("nvim-treesitter.configs").setup(opts) end`。
-   - 停在 main 分支不会报错但功能全无，所以 `config` 里加了双分支兜底 + 告警。
-3. **treesitter 的 indent 模块必须关闭**（`indent = { enable = false }`）
-   打开后它把 `indentexpr` 换成 `nvim_treesitter#indent()`，而 c/cpp 的 `indents.scm`
-   用了 `#not-kind-eq?`，在新版 nvim 上触发
-   `query_predicates.lua:106: attempt to call method 'type' (a nil value)` →
-   indentexpr 抛异常 → **每行按 `<CR>` 缩进都变 0**（受影响：c cpp ecma groovy ispc ocaml r swift）。
+2. **nvim-treesitter 必须用 `branch = "main"`（不要再回 master）**
+   master 已被官方**冻结**，它的实现与 nvim 0.12 的 query API 不兼容，且不会再修 ——
+   本项目在 master 上连续踩了三个坑（都是结构性、无法在配置里根治，最后整体迁移）：
+   - `#not-kind-eq?` → `query_predicates.lua:106 attempt to call method 'type'`：indentexpr 抛异常，
+     C/C++ 按 `<CR>` 缩进归零；
+   - `#set-lang-from-info-string!` → `query_predicates.lua:141 attempt to call method 'range'`：
+     **含代码块的 markdown 文件反复刷屏报错**（栈底是 render-markdown）；
+   - `install.lua` 写死 `tree-sitter generate --no-bindings`，而 CLI ≥ 0.26 已移除该参数 →
+     每次启动重试安装 latex 并弹错。
+   main 分支：不注册任何自定义 predicate/directive（用 nvim 内置 `@injection.language` 捕获）、
+   安装走 `tree-sitter generate/build`。落地要点（都已实测）：
+   ```lua
+   branch = "main", lazy = false, build = ":TSUpdate"   -- main 官方声明不支持懒加载
+   require("nvim-treesitter").setup({ install_dir = vim.fn.stdpath("data") .. "/site" })
+   require("nvim-treesitter").install({ ... })           -- 异步，已装则跳过
+   vim.treesitter.language.register("json", "jsonc")     -- main 已无独立 jsonc parser
+   vim.api.nvim_create_autocmd("FileType", { callback = function(ev) pcall(vim.treesitter.start, ev.buf) end })
+   ```
+   - **不要再写 `ensure_installed` / `highlight` / `indent`**：这些是 master 的 opts；
+     main 的 `setup()` 只认 `install_dir`，其余靠上面的显式 API。
+   - parser/queries 装在 `stdpath("data")/site`，该目录被**前置**到 rtp，所以优先于 nvim 自带
+     以及 lazy 插件目录里的旧文件（实测 `parser/lua.so` 顺序：site → 旧 master 目录 → 自带），
+     从 master 迁过来**不需要**手动清理旧的 parser/*.so。
+   - 要求 `tree-sitter` CLI ≥ 0.26.1（`brew install tree-sitter-cli`），缺了装不了 parser。
+3. **treesitter 的 indent（缩进）继续用 Neovim 内置脚本**
+   main 的 TS indent 仍是 experimental，且历史坑极多（见第 2 条）。`indentexpr` 应为空，
+   由 `indent/c.vim`+cindent / python / go / lua 等内置脚本负责；healthcheck 有回归检查。
 4. **不要用 `nvim_set_hl(0, g, { bg = "NONE" })` 表达「只改背景」**
    那是整体替换语义，会把 fg 一起清空（`Normal` / `LineNr` 变白）；everforest 里
    `LspInlayHint → InlayHints → LineNr`，于是形参提示也变白。
@@ -77,16 +91,7 @@ treesitter 分支、snippet 跳转、键位齐全等）。退出码 `0` = 全部
 8. **LSP 动作要有反馈**：telescope 的 call hierarchy 在「不支持 / 无结果」时完全静默，
    用户会以为键坏了。统一用 `util/lsp.lua` 的 `guard()` / `call_hierarchy()` 包一层提示。
 9. **`gt` 是内置的「下一个标签页」**，不要拿去做 LSP 跳转（类型定义在 `<leader>ct`）。
-10. **tree-sitter CLI >= 0.26 移除了 `generate --no-bindings`**
-   实测：0.23 / 0.24 / 0.25 支持，0.26.13 / 0.27.0 不支持；而 nvim-treesitter 的
-   master 分支（官方已冻结，不会再修）在 `install.lua` 里写死了这个参数 →
-   装了新版 CLI 的机器每次启动都会重试安装 `latex` 并弹
-   `Error: nvim-treesitter[latex]: Error during "tree-sitter generate"`。
-   只影响 `requires_generate_from_grammar` 的 grammar
-   （latex / mlir / ocamllex / scfg / swift / teal / unison，本配置里只有 latex）。
-   `plugins/treesitter.lua` 用 `ts_cli_supports_generate()` 检测后动态裁剪
-   `ensure_installed`，healthcheck 第 9 项做回归保护。想真装 latex 需要 CLI 0.25.x。
-11. **远端可能有人工提交**：push 前先 `git fetch`，`git rebase origin/main` 后再 push，
+10. **远端可能有人工提交**：push 前先 `git fetch`，`git rebase origin/main` 后再 push，
     **禁止 force push**（会毁掉用户自己的提交）。
 
 ## 4. 怎么验证（沙箱套路）

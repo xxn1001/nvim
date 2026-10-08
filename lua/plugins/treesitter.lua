@@ -1,145 +1,81 @@
--- Treesitter 语法高亮
+-- Treesitter 语法高亮 —— 使用 nvim-treesitter 的 **main** 分支（官方重写版 / 默认分支）
 --
--- 【修复】nvim-treesitter 的默认分支已经改成重写版 main（master 被官方标记为锁定分支）。
--- main 分支要求 nvim >= 0.12 + tree-sitter-cli + C 编译器，且 API 完全不同
--- （没有 nvim-treesitter.configs）。原配置写的是旧版 master 的 API，却拉到了 main 分支，
--- 结果 `require("nvim-treesitter.configs")` 直接 module not found：
---   * 语法高亮没有生效（悄悄退回老式正则 syntax）
---   * ensure_installed 里的 parser 一个都没装（实测 parser 数 = 0）
---   * ufo 折叠 / rainbow-delimiters 也一起退化
--- 这里显式锁定 master 分支（官方仍维护、兼容 0.11 / 0.12）。
+-- ============================ 为什么从 master 迁到 main ============================
+-- master 分支已被官方冻结，它的自定义 predicate/directive 与 nvim 0.12 的 query API 不兼容，
+-- 实测踩到过三个坑（都在 master 上无法修复，因为不再更新）：
+--   1. 缩进：c/cpp 的 indents.scm 用 #not-kind-eq? → query_predicates.lua:106
+--      `attempt to call method 'type' (a nil value)` → indentexpr 抛异常 → 按 <CR> 缩进归零
+--   2. markdown：#set-lang-from-info-string! → query_predicates.lua:141
+--      `attempt to call method 'range' (a nil value)` → 含代码块的 md 文件反复报错刷屏
+--   3. 安装：install.lua 写死 `tree-sitter generate --no-bindings`，而 CLI >= 0.26 移除了该参数
+--      → 每次启动重试安装 latex 并弹错
 --
--- 【第二处修复】还必须写显式 config：
--- lazy.nvim 对只写 opts 的插件会推断模块并调用 require("nvim-treesitter").setup(opts)，
--- 但 master 分支的 nvim-treesitter.setup() 是不接收参数的（只注册 :TSInstall 等命令），
--- 于是 opts 被静默丢弃 —— 实测 highlight.enable = false、ensure_installed = {}。
--- 正确的入口是 nvim-treesitter.configs.setup(opts)。
+-- main 分支：
+--   * 不再注册任何自定义 predicate/directive（markdown 注入直接用 nvim 内置的
+--     `@injection.language` 捕获），上面前两个问题结构性消失
+--   * 安装走 `tree-sitter generate` / `tree-sitter build`（不带 --no-bindings），与新版 CLI 兼容
+--   * 官方声明「不支持懒加载」，所以必须 lazy = false
 --
--- ⚠️ 注意 module 名取决于**插件所在的分支**（不是 nvim 版本）：
---   master: lua/nvim-treesitter/configs.lua  存在，config.lua   不存在
---           → require("nvim-treesitter.configs").setup(opts)  ← 本配置走这条
---   main  : lua/nvim-treesitter/config.lua   存在，configs.lua 不存在
---           → require("nvim-treesitter.config").setup(opts)
--- 两个分支的 setup 语义完全不同：main 的 config.setup() 源码里只处理 install_dir
--- 一个字段，ensure_installed / highlight / indent 会被静默忽略，而且 main 没有
--- highlight 模块（高亮要自己 FileType → vim.treesitter.start()），
--- 所以停在 main 上不会报错、但 treesitter 实际是死的。
--- 如果你看到 “module 'nvim-treesitter.configs' not found”，说明本地插件目录还停在
--- main（旧配置遗留），执行 :Lazy sync / :Lazy restore 切到 master 即可。
+-- 要求：Neovim >= 0.12 + tree-sitter CLI >= 0.26.1（brew install tree-sitter-cli）
+-- 说明：main 不再有 highlight / indent 模块——高亮由 nvim 原生 vim.treesitter.start() 提供，
+--       缩进继续交给 Neovim 内置 indent 脚本（cindent / python / go / lua…），见 options.lua。
+-- =================================================================================
 
---- 需要 `tree-sitter generate` 才能装的 grammar
---- （对应 nvim-treesitter 的 parsers.lua 里 requires_generate_from_grammar = true）
-local PARSERS_NEEDING_GENERATE = {
-  latex = true,
-  mlir = true,
-  ocamllex = true,
-  scfg = true,
-  swift = true,
-  teal = true,
-  unison = true,
+--- 需要安装的 parser（main 的 parsers.lua 里已没有 jsonc，改为把 json 注册给 jsonc 文件类型）
+local PARSERS = {
+  "bash", "fish", "python", "yaml", "lua", "json", "nix",
+  "regex", "toml", "vim", "markdown", "markdown_inline",
+  "glsl", "css", "scss", "html", "hyprlang",
+  "c", "cpp", "rust",
+  "go", "gomod", "gowork",
+  "javascript", "typescript", "tsx",
+  "latex", "typst",
+  "cmake", "make", "dockerfile",
+  "diff", "git_config", "gitignore",
+  "sql", "graphql",
+  "query",
 }
-
---- 本机 tree-sitter CLI 是否还能用 `generate --no-bindings`
----
---- 背景：nvim-treesitter 的 master 分支（官方已冻结）在 install.lua 里写死了
----     tree-sitter generate --no-bindings ...
---- 而 tree-sitter CLI 从 0.26 起移除了 --no-bindings（实测 0.26.13 / 0.27.0 都没有，
---- 0.23 / 0.24 / 0.25 有）。于是装了新版 CLI 的机器每次启动都会看到：
----     Error: nvim-treesitter[latex]: Error during "tree-sitter generate"
----     error: unexpected argument '--no-bindings' found
---- 注意：只有上面这几个 grammar 需要 generate，其它 parser 不受影响。
----@return boolean
-local function ts_cli_supports_generate()
-  if vim.fn.executable("tree-sitter") == 0 then
-    return false
-  end
-  local help = vim.fn.system({ "tree-sitter", "generate", "--help" })
-  return vim.v.shell_error == 0 and help:find("--no-bindings", 1, true) ~= nil
-end
 
 return {
   {
     "nvim-treesitter/nvim-treesitter",
-    branch = "master",
+    branch = "main",
+    lazy = false, -- main 官方明确「不支持懒加载」
     build = ":TSUpdate",
-    event = { "BufReadPost", "BufNewFile" },
-    config = function(_, opts)
-      -- 按本机 CLI 的实际能力裁剪 ensure_installed：
-      -- CLI 不支持 --no-bindings 时跳过需要 generate 的 parser（本列表里只有 latex），
-      -- 这样就不会每次启动都弹安装失败。想装它们请换回支持该参数的 CLI，见 README。
-      if type(opts.ensure_installed) == "table" and not ts_cli_supports_generate() then
-        opts.ensure_installed = vim.tbl_filter(function(parser)
-          return not PARSERS_NEEDING_GENERATE[parser]
-        end, opts.ensure_installed)
-      end
+    config = function()
+      local ts = require("nvim-treesitter")
 
-      -- 正常路径：master 分支，功能完整（parser 自动安装 + 高亮 + 缩进）
-      local ok, configs = pcall(require, "nvim-treesitter.configs")
-      if ok and type(configs.setup) == "function" then
-        configs.setup(opts)
-        return
-      end
+      -- install_dir 会被**前置**到 runtimepath，从而优先于 nvim 自带的同名 parser/queries。
+      -- 默认值就是 stdpath('data')/site，这里写出来是为了让行为一目了然。
+      ts.setup({ install_dir = vim.fn.stdpath("data") .. "/site" })
 
-      -- 兜底路径：插件目录停在 main 分支时，至少把高亮打开，并明确告知怎么修，
-      -- 避免出现“没有报错但语法高亮全没了”这种最难排查的状态。
-      local ok_main, main = pcall(require, "nvim-treesitter.config")
-      if ok_main and type(main.setup) == "function" then
-        main.setup({})
-        vim.api.nvim_create_autocmd("FileType", {
-          group = vim.api.nvim_create_augroup("config.treesitter_main_fallback", { clear = true }),
-          desc = "main 分支兜底：开启 treesitter 高亮",
-          callback = function()
-            pcall(vim.treesitter.start)
-          end,
-        })
-        vim.notify(
-          "nvim-treesitter 当前处于 main 分支，但本配置按 master 编写：\n"
-            .. "ensure_installed（parser 自动安装）和缩进不会生效。\n"
-            .. "请执行 :Lazy sync 或 :Lazy restore 切回 master；详见 README 常见问题。",
+      -- jsonc 文件类型复用 json 语法（main 已移除独立的 jsonc parser）
+      vim.treesitter.language.register("json", "jsonc")
+
+      -- 安装 parser：异步执行，已装过的会被跳过（等价于旧配置的 ensure_installed）。
+      -- main 依赖 tree-sitter CLI 来构建，缺了会直接报错，所以先检测并给一次性提示。
+      if vim.fn.executable("tree-sitter") == 1 then
+        ts.install(PARSERS)
+      else
+        vim.notify_once(
+          "未找到 tree-sitter CLI，无法自动安装 treesitter parser。\n请先 `brew install tree-sitter-cli`，然后执行 :TSUpdate",
           vim.log.levels.WARN
         )
-        return
       end
 
-      vim.notify("nvim-treesitter 未安装或结构异常，请执行 :Lazy sync", vim.log.levels.ERROR)
+      -- 高亮：main 不再提供 highlight 模块，按官方文档用 FileType autocmd 开 nvim 原生高亮。
+      -- 没有对应 parser 的文件类型会报错，用 pcall 兜住（退回正则语法高亮）。
+      vim.api.nvim_create_autocmd("FileType", {
+        group = vim.api.nvim_create_augroup("config.treesitter", { clear = true }),
+        desc = "开启 nvim 原生 treesitter 高亮",
+        callback = function(ev)
+          pcall(vim.treesitter.start, ev.buf)
+        end,
+      })
     end,
-    opts = {
-      auto_install = false,
-      ensure_installed = {
-        "bash", "fish", "python", "yaml", "lua", "json", "nix",
-        "regex", "toml", "vim", "markdown", "markdown_inline", "jsonc",
-        "glsl", "css", "scss", "html", "hyprlang",
-        "c", "cpp", "rust",
-        "go", "gomod", "gowork",
-        "javascript", "typescript", "tsx",
-        "latex", "typst",
-        "cmake", "make", "dockerfile",
-        "diff", "git_config", "gitignore",
-        "sql", "graphql",
-        "query",
-      },
-      highlight = { enable = true },
-
-      -- ⚠️ 缩进模块【故意关闭】，这是修复「按 Enter 不自动缩进」的关键：
-      --
-      -- 打开它（enable = true）后，nvim-treesitter 会把 indentexpr 换成
-      -- nvim_treesitter#indent()，而 master 分支在当前 nvim 上对 C/C++ 会直接报错：
-      --   nvim-treesitter/query_predicates.lua:106:
-      --     attempt to call method 'type' (a nil value)
-      --   ← c/cpp 的 indents.scm 用了 #not-kind-eq? 谓词，
-      --     新版 nvim 对量化捕获返回的是节点列表，插件却当成单个节点调用 :type()
-      -- indentexpr 抛异常 → Vim 得到 0 → 每行按 Enter 都顶格（实测 C++ 全为 0，
-      -- 而内置 indent 脚本给出的是 4/8/12 正确值）。
-      -- 受影响语言：c cpp ecma groovy ispc ocaml r swift 等。
-      --
-      -- 关掉之后交给 Neovim 自带的 indent 脚本（indent/c.vim + cindent、python、go、
-      -- lua、rust、typescript…），表现稳定，也是原配置实际使用的缩进方式。
-      -- 想重新试验：把下面 enable 改成 true，并确认对应语言不再报错。
-      indent = { enable = false },
-    },
   },
   {
-    -- 新版无 setup API，靠自身 FileType autocmd 附着；常驻避免错过第一个 buffer
+    -- 自带 queries，不依赖 nvim-treesitter
     "HiPhish/rainbow-delimiters.nvim",
     lazy = false,
   },

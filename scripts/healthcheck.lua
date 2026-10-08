@@ -108,16 +108,32 @@ vim.wait(200)
 check("<C-o> 能回到上一个跳转位置", vim.api.nvim_win_get_cursor(0)[1] == 5,
   "光标停在 " .. vim.api.nvim_win_get_cursor(0)[1] .. "（util/jump.lua 里要写 normal! m'）")
 
--- 6. treesitter ---------------------------------------------------------------
-local branch = vim.fn.system("git -C " .. vim.fn.stdpath("data") .. "/lazy/nvim-treesitter branch --show-current 2>/dev/null"):gsub("%s", "")
-check("nvim-treesitter 处于 master 分支", branch == "master",
-  "当前分支=" .. branch .. "（执行 :Lazy sync；main 分支的 API 与本配置不兼容）")
-check("nvim-treesitter.configs 入口可用", pcall(require, "nvim-treesitter.configs"),
-  "master 分支入口是 nvim-treesitter.configs（复数）")
-check("nvim-treesitter 的 indent 模块已关闭", (function()
-  local ok, c = pcall(require, "nvim-treesitter.configs")
-  return ok and c.get_module("indent").enable == false
-end)(), "indent 必须为 false，否则 C/C++ 的缩进会归零")
+-- 6. treesitter（main 分支 + markdown 注入回归）-----------------------------
+-- 历史背景：master 分支（官方已冻结）的自定义 predicate/directive 与 nvim 0.12 不兼容，
+-- 踩过 #not-kind-eq?（缩进归零）和 #set-lang-from-info-string!（markdown 刷屏报错），
+-- 因此迁移到 main。以下三项做回归保护。
+local ts_plugin_dir = vim.fn.stdpath("data") .. "/lazy/nvim-treesitter"
+local branch = vim.fn.system("git -C " .. ts_plugin_dir .. " branch --show-current 2>/dev/null"):gsub("%s", "")
+check("nvim-treesitter 处于 main 分支", branch == "main",
+  "当前分支=" .. branch .. "（main 才与 nvim 0.12 的 query API 兼容；执行 :Lazy sync）")
+
+local ok_ts, ts = pcall(require, "nvim-treesitter")
+check("main 分支的 API 入口可用（setup/install）",
+  ok_ts and type(ts.setup) == "function" and type(ts.install) == "function",
+  "main 的入口是 require('nvim-treesitter').setup/install，不再是 nvim-treesitter.configs")
+
+-- markdown 注入回归：含代码块的 md 必须能正常 parse（master 时代这里会崩）
+vim.fn.writefile({ "# t", "", "```lua", "local x = 1", "```", "" }, "/tmp/healthcheck_md.md")
+vim.cmd("edit! /tmp/healthcheck_md.md")
+vim.wait(600)
+local md_ok, md_err = pcall(function()
+  local parser = vim.treesitter.get_parser(0, "markdown")
+  parser:parse(true)
+end)
+local md_msgs = vim.fn.execute("messages")
+check("markdown 代码块注入不再报错（#set-lang-from-info-string! 崩溃回归）",
+  md_ok and not md_msgs:match("attempt to call method 'range'") and not md_msgs:match("query_predicates"),
+  "解析失败：" .. tostring(md_err) .. " / messages 里有 query_predicates 报错")
 
 -- 7. 补全：Tab 必须支持 snippet 占位符跳转 -----------------------------------
 require("lazy").load({ plugins = { "nvim-cmp", "LuaSnip" } })
@@ -143,33 +159,100 @@ end)(), "plugins/completion.lua 应以 cmp.mapping.preset.insert() 为基底")
 check("foldexpr 未引用 vim.ufo（nvim-ufo 不提供该函数）", not vim.wo.foldexpr:match("vim%.ufo"),
   "当前 foldexpr=" .. vim.wo.foldexpr .. "（options.lua 里删掉 foldmethod=expr / foldexpr）")
 
--- 9. tree-sitter CLI 能力与 ensure_installed 是否一致 ------------------------
--- tree-sitter >= 0.26 移除了 `generate --no-bindings`，而 nvim-treesitter master 仍用它；
--- 配置会在 CLI 不支持时自动跳过需要 generate 的 parser（本列表里是 latex），
--- 避免每次启动都弹安装失败。这里做回归保护。
-local ts_cli_supports_generate = (function()
+-- 9. tree-sitter CLI（main 用它构建 parser，要求 >= 0.26.1）--------------------
+local cli_version = (function()
   if vim.fn.executable("tree-sitter") == 0 then
-    return false
+    return nil
   end
-  local help = vim.fn.system({ "tree-sitter", "generate", "--help" })
-  return vim.v.shell_error == 0 and help:find("--no-bindings", 1, true) ~= nil
+  local out = vim.fn.system({ "tree-sitter", "--version" })
+  return out:match("(%d+%.%d+%.%d+)")
 end)()
-local need_generate = {
-  latex = true, mlir = true, ocamllex = true, scfg = true, swift = true, teal = true, unison = true,
+local cli_ok = false
+if cli_version then
+  local maj, min = cli_version:match("^(%d+)%.(%d+)")
+  maj, min = tonumber(maj), tonumber(min)
+  -- main 官方要求 >= 0.26.1；实测 0.25.x 也能正常构建 parser，所以下限放到 0.25
+  cli_ok = maj > 0 or min >= 25
+end
+check("tree-sitter CLI 可用（main 官方要求 >= 0.26.1，实测 >= 0.25 亦可）", cli_ok,
+  "检测到版本=" .. tostring(cli_version) .. "（brew install tree-sitter-cli）")
+
+-- 10. treesitter 高亮在真实 buffer 上生效（main 用 FileType autocmd 开启）------
+vim.fn.writefile({ "local function f(a, b)", "  return a + b", "end", "return f(1, 2)" }, "/tmp/healthcheck_hl.lua")
+vim.cmd("edit! /tmp/healthcheck_hl.lua")
+vim.wait(1000)
+check("treesitter 高亮在真实 buffer 上生效",
+  vim.treesitter.highlighter.active[vim.api.nvim_get_current_buf()] ~= nil,
+  "FileType autocmd 里的 vim.treesitter.start() 没生效（plugins/treesitter.lua）")
+
+-- 11. 配置依赖的插件 API 清单（插件升级后防 API 漂移）-------------------------
+local api_expectations = {
+  { "cmp", { "setup", "mapping", "complete", "visible", "select_next_item", "select_prev_item", "confirm", "get_entries" } },
+  { "cmp.config", { "get" } },
+  { "luasnip", { "lsp_expand", "expand_or_jump", "jump", "jumpable", "expand_or_locally_jumpable", "locally_jumpable", "in_snippet" } },
+  { "conform", { "format" } },
+  { "telescope", { "setup", "load_extension" } },
+  { "telescope.actions", { "file_split", "file_vsplit", "file_tab" } },
+  { "trouble", { "open", "close", "is_open", "next", "previous" } },
+  { "ufo", { "setup", "openAllFolds", "closeAllFolds", "peekFoldedLinesUnderCursor" } },
+  { "gitsigns", { "nav_hunk", "preview_hunk", "blame_line", "diffthis", "setqflist", "toggle_current_line_blame", "toggle_word_diff", "select_hunk" } },
+  { "flash", { "jump", "treesitter", "remote", "treesitter_search" } },
+  { "ibl", { "setup" } },
+  { "mini.align", { "setup" } },
+  { "mini.move", { "setup" } },
+  { "mini.hipatterns", { "setup", "gen_highlighter" } },
+  { "mini.indentscope", { "setup" } },
+  { "persistence", { "load", "stop" } },
+  { "aerial", { "toggle" } },
+  { "nvim-treesitter", { "setup", "install", "update" } },
+  { "nvim-autopairs.completion.cmp", { "on_confirm_done" } },
 }
-local unsupported = {}
-local ok_ens, ens = pcall(function()
-  return require("nvim-treesitter.configs").get_ensure_installed_parsers()
-end)
-for _, parser in ipairs(ok_ens and ens or {}) do
-  if need_generate[parser] and not ts_cli_supports_generate then
-    unsupported[#unsupported + 1] = parser
+local api_missing = {}
+for _, spec in ipairs(api_expectations) do
+  local mod, fns = spec[1], spec[2]
+  local ok, m = pcall(require, mod)
+  if not ok then
+    api_missing[#api_missing + 1] = mod .. "(模块缺失)"
+  else
+    for _, fn in ipairs(fns) do
+      if m[fn] == nil then
+        api_missing[#api_missing + 1] = mod .. "." .. fn
+      end
+    end
   end
 end
-check("ensure_installed 已按本地 CLI 能力裁剪（不会弹 parser 安装失败）", #unsupported == 0,
-  "这些 parser 需要 tree-sitter generate，但本地 CLI 不支持 --no-bindings: " .. table.concat(unsupported, ", "))
+check(("配置依赖的插件 API 都在（%d 个模块）"):format(#api_expectations), #api_missing == 0,
+  "缺失/改名: " .. table.concat(api_missing, ", ") .. "（插件大版本升级后需要同步改配置）")
 
--- 10. 关键键位 ---------------------------------------------------------------
+-- 12. nvim 内置 API 清单 -----------------------------------------------------
+local vim_api = {
+  "vim.lsp.config", "vim.lsp.enable", "vim.lsp.inlay_hint", "vim.lsp.buf_request_all",
+  "vim.diagnostic.config", "vim.diagnostic.open_float", "vim.diagnostic.get",
+  "vim.treesitter.start", "vim.treesitter.language.register",
+  "vim.hl.on_yank", "vim.api.nvim_get_hl", "vim.api.nvim_set_hl", "vim.keymap.set",
+}
+local vim_missing = {}
+for _, path in ipairs(vim_api) do
+  local cur = vim
+  local ok_path = true
+  for part in path:gmatch("[^.]+") do
+    if part ~= "vim" then
+      if type(cur) == "table" and cur[part] ~= nil then
+        cur = cur[part]
+      else
+        ok_path = false
+        break
+      end
+    end
+  end
+  if not ok_path then
+    vim_missing[#vim_missing + 1] = path
+  end
+end
+check(("nvim 内置 API 都在（%d 项，要求 nvim >= 0.12）"):format(#vim_api), #vim_missing == 0,
+  "缺失: " .. table.concat(vim_missing, ", ") .. "（nvim 版本过低）")
+
+-- 13. 关键键位 ---------------------------------------------------------------
 local keys = {
   "<leader>cf", "<leader>sh", "<leader>co", "<leader>ct",
   "<leader>ce", "<leader>cd", "<leader>cG", "<leader>ci", "<leader>cw",

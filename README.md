@@ -45,7 +45,7 @@ Nerd Font（图标显示）：`brew install --cask font-jetbrains-mono-nerd-font
 ├── lazy-lock.json              # 插件版本锁（入库，保证换机可复现）
 ├── AGENTS.md                   # ★ 给「以后来维护的 agent / 人」的维护手册（坑 + 验证方法）
 ├── scripts/
-│   └── healthcheck.lua         # ★ 一键自检（17 项，覆盖所有历史 bug 的回归）
+│   └── healthcheck.lua         # ★ 一键自检（20 项，覆盖所有历史 bug 的回归）
 └── lua
     ├── config/                 # 纯设置与逻辑
     │   ├── globals.lua         # leader 等全局变量
@@ -220,6 +220,30 @@ nvim --headless "+luafile scripts/healthcheck.lua"
 | 5 | **按 `<CR>` 不自动缩进**（C/C++ 尤其明显，每行都顶格） | treesitter 的 indent 模块把 `indentexpr` 换成 `nvim_treesitter#indent()`，而 master 分支在新版 nvim 上解析 c/cpp 的 `indents.scm`（用到 `#not-kind-eq?` 谓词）时报 `query_predicates.lua:106: attempt to call method 'type' (a nil value)` → `indentexpr` 抛异常 → 缩进算成 0 | `lua/plugins/treesitter.lua` 里 `indent = { enable = false }`，交给 Neovim 内置 indent 脚本（`indent/c.vim`+cindent、python、go、lua…）。实测逐行缩进与老配置完全一致（C++ 0/4/8/12…） |
 | 6 | 函数补全后**残留的形参删不掉**（如 `kill(a, int sig)` 里的 `int sig`） | clangd 的函数补全带 snippet 占位符 `kill(${1:__pid_t pid}, ${2:int sig})`，**占位符是真实文本**；而配置里 `<Tab>` 只映射到 cmp 的「选下一个候选」，菜单关掉后 cmp 会 fallback 成插入 Tab —— 没有任何键能跳到下一个占位符 | `lua/plugins/completion.lua`：`<Tab>`/`<S-Tab>` 变为「补全菜单 → snippet 占位符跳转 → 主动补全 → 原生行为」，并以 `cmp.mapping.preset.insert()` 为基底（顺带找回 `<C-n>/<C-p>/<C-y>/<C-e>`）。活体实测：`kill(a, int sig)` 按 `<Tab>` → 选中 `int sig` → 输入 `b` → `kill(a, b)` |
 | 7 | 每次算折叠都报 `E5108: attempt to index field 'ufo'` | 老配置（nixvim 时代旧版 ufo）留下的 `foldmethod=expr` + `foldexpr=v:lua.vim.ufo.foldexpr()`；而 nvim-ufo 源码里**既没有 `vim.ufo` 也没有 `foldexpr`**，它靠 `foldtext` 接管折叠 | `config/options.lua` 删除这两行（ufo 官方最小配置只需要 `foldlevel`/`foldlevelstart`/`foldenable`），实测 `foldexpr` 恢复默认、`foldmethod=manual`、`zR`/`zM` 正常、无报错 |
+| 8 | 打开含代码块的 **markdown 文件反复报错**：`vim/treesitter.lua:197: attempt to call method 'range' (a nil value)`（栈里是 `query_predicates.lua:141` → `#set-lang-from-info-string!`） | nvim-treesitter **master 分支**（官方已冻结）注册的自定义 directive 与 nvim 0.12 的 query API 不兼容：`match[capture_id]` 不再是裸 TSNode，插件仍当成节点调用 `:range()` | **整体迁移到 main 分支**（详见下节）。main 不再注册任何自定义 predicate/directive，markdown 注入直接用 nvim 内置的 `@injection.language` 捕获 → 结构性问题消失 |
+
+### 为什么 nvim-treesitter 用 main 分支（而不是 master）
+
+`master` 已被官方**冻结**，而它的三处实现与 nvim 0.12 不兼容，且不会再修：
+
+| 现象 | master 的根因 | main 的情况 |
+| --- | --- | --- |
+| 按 `<CR>` 不缩进（C/C++ 顶格） | `#not-kind-eq?` → `query_predicates.lua:106` `attempt to call method 'type'` | main 不自注册 predicate |
+| 含代码块的 markdown 刷屏报错 | `#set-lang-from-info-string!` → `query_predicates.lua:141` `attempt to call method 'range'` | main 用 nvim 内置 `@injection.language` 捕获 |
+| 启动弹 latex 安装失败（`--no-bindings`） | install.lua 写死了被 CLI ≥0.26 移除的参数 | main 用 `tree-sitter generate/build`，兼容新版 CLI |
+
+迁移后的落地方式（已实测）：
+
+- `branch = "main"` + `lazy = false`（main 官方声明不支持懒加载）+ `build = ":TSUpdate"`
+- `require("nvim-treesitter").setup({ install_dir = stdpath("data").."/site" })`：
+  该目录会被**前置**到 `runtimepath`，因此插件安装的 parser/queries **优先于** nvim 自带的同名文件
+  （实测 `parser/lua.so` 查找顺序：`site` → 旧 master 目录 → nvim 自带；旧的 master parser 不再干扰）
+- `require("nvim-treesitter").install({...})` 安装 37 个 parser（异步，已装则跳过）
+- 高亮改由 nvim 原生提供：`FileType` autocmd 里 `pcall(vim.treesitter.start, ev.buf)`
+- 缩进仍交给 Neovim 内置 indent 脚本（main 的 TS indent 也还是 experimental，不用）
+- `jsonc` 在 main 里已并入 `json`：用 `vim.treesitter.language.register("json", "jsonc")` 兼容
+
+> **要求**：`tree-sitter` CLI ≥ 0.26.1（`brew install tree-sitter-cli`；你机器上已是 0.26/0.27 ✅）。
 
 另外顺手修掉的问题：
 
@@ -313,31 +337,22 @@ module 名取决于**插件所在的分支**，与 nvim 版本无关：
 本配置已经做了兜底：万一插件仍在 main 分支，启动时会用 `vim.treesitter.start()` 打开高亮，
 并弹出一条警告提示你切分支（不会像以前那样悄无声息）。
 
-**Q：启动时弹窗报 `nvim-treesitter[latex]: Error during "tree-sitter generate"` / `unexpected argument '--no-bindings'`？**
-这是 tree-sitter CLI 与 nvim-treesitter（master 分支，官方已冻结）的版本不匹配：
+**Q：启动时弹窗报 `nvim-treesitter[latex]: Error during "tree-sitter generate"`（unexpected argument '--no-bindings'）？**
+如果你还看到这个，说明**插件目录仍停在 master 分支**（旧配置遗留）：
 
-| tree-sitter CLI | `generate --no-bindings` |
+| tree-sitter CLI | master 的 `--no-bindings` |
 | --- | --- |
-| 0.23 / 0.24 / 0.25 | ✅ 支持 |
-| **0.26 / 0.27（brew 现在装的就是）** | ❌ 已移除 |
+| 0.23 / 0.24 / 0.25 | ✅ |
+| 0.26 / 0.27 | ❌ 已移除 → master 每次启动都会重试安装 latex 并弹错 |
 
-master 分支的 `install.lua` 里写死了 `tree-sitter generate --no-bindings`，
-而**只有需要 `generate` 的 grammar 会受影响**（本配置的列表里只有 `latex`），
-其它 37 个 parser 与该参数无关。
+本配置已迁移到 **main 分支**（见上文「为什么用 main 分支」），main 用 `tree-sitter generate/build`，
+新版 CLI 完全正常，latex 也能装。执行一次即可切过去：
 
-本配置已经自适应：`plugins/treesitter.lua` 会检测本机 CLI 是否支持该参数，
-不支持时自动把 `latex` 从 `ensure_installed` 里剔除 —— **不会再每次启动弹错**。
-如果你确实要用 LaTeX：
-
-```sh
-brew uninstall tree-sitter-cli                  # 0.26/0.27 不行
-cargo install tree-sitter-cli --version 0.25.10 # 或下载官方 release 里的 0.25.x 二进制
-tree-sitter generate --help | grep no-bindings  # 有输出即 OK
+```vim
+:Lazy sync        " 或 :Lazy restore —— 会按 lazy-lock.json 切到 main 并重装 parser 到 stdpath('data')/site
 ```
 
-然后 `:TSInstall latex` 即可（配置里的 latex 会自动重新生效）。
-
-**Q：LSP 没反应 / 没有补全？**
+**Q：LSP 没反应 / 没有补全？****Q：LSP 没反应 / 没有补全？**
 `:Mason` 确认服务器已安装；`:LspInfo` 看当前 buffer 是否附着；`:checkhealth vim.lsp` 看具体报错。
 mason 的 bin 目录由 mason 自动加入 PATH，无需手动配置。
 
