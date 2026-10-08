@@ -270,6 +270,47 @@ for _, k in ipairs(keys) do
 end
 check(("关键键位齐全（%d 个）"):format(#keys), #missing == 0, "缺失: " .. table.concat(missing, ", "))
 
+-- 14. 可视模式：选中文本后能直接操作（surround 的 S / gS 必须已注册）---------
+-- 历史背景：nvim-surround 原来写成 keys = { "cs", "ds", "ys" }，lazy.nvim 对字符串键位
+-- 只在普通模式注册，于是可视模式按 S 时插件不会被加载，而 flash.nvim 又把可视模式
+-- 的 S 占作 treesitter 搜索 → 用户「选中一段文字想包大括号」时按 S 毫无反应。
+--
+-- 注意：这里**不能**用 vim.fn.maparg("S", "x") 判断！因为本脚本前面的「全部插件可加载」
+-- 会把 surround 真正加载进来，插件自己的 S 映射那时就已存在；而且 flash 也把 S 声明成
+-- 可视模式懒加载键。（实测：即使退回旧写法，maparg("S","x") 依然非空 → 检查会假绿。）
+-- 真正的判别器是 **gS**：flash 不管 gS，只有 surround 的 keys 声明会注册它，
+-- 所以直接问 lazy.nvim 的「懒加载触发键注册表」最准。
+local lazy_keys = require("lazy.core.handler").handlers.keys
+check("可视模式已注册 surround 触发键（gS → 懒加载 nvim-surround）", lazy_keys:have("gS", "x"),
+  "plugins/editing.lua 里需要 { 'S', 'gS', mode = 'x' }，否则选中后按 S 会被 flash 抢走")
+
+-- 实做一遍：选中 foo 后按 S} 应得到 {foo}
+require("lazy").load({ plugins = { "nvim-surround" } })
+vim.wait(1000)
+vim.cmd("enew!")
+vim.bo.filetype = "lua"
+vim.api.nvim_buf_set_lines(0, 0, -1, false, { "foo bar" })
+vim.api.nvim_win_set_cursor(0, { 1, 0 })
+vim.api.nvim_feedkeys(vim.keycode("viwS}"), "x", false)
+wait_for(1500, function()
+  return vim.api.nvim_buf_get_lines(0, 0, -1, false)[1] == "{foo} bar"
+end)
+local surround_line = vim.api.nvim_buf_get_lines(0, 0, -1, false)[1]
+check("可视模式选中后 S} 能包成大括号", surround_line == "{foo} bar",
+  "当前行=[" .. surround_line .. "]（应得到 {foo} bar）")
+
+-- 15. 可视模式下的其它操作键（格式化选区 / 换行包裹）-------------------------
+local visual_keys = { "<leader>cf", "gS" }
+local vmissing = {}
+for _, k in ipairs(visual_keys) do
+  local m = vim.fn.maparg(k, "x", false, true)
+  if not (m.callback or (m.rhs and m.rhs ~= "")) then
+    vmissing[#vmissing + 1] = k
+  end
+end
+check(("可视模式操作键齐全（%d 个）"):format(#visual_keys), #vmissing == 0,
+  "缺失: " .. table.concat(vmissing, ", "))
+
 -- 汇总 -----------------------------------------------------------------------
 local failed = 0
 for _, r in ipairs(results) do

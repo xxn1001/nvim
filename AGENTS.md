@@ -35,8 +35,8 @@ cd ~/.config/nvim
 nvim --headless "+luafile scripts/healthcheck.lua"
 ```
 
-共 20 项，覆盖本项目所有历史 bug 的回归（高亮、自动缩进、手动格式化、跳转返回、treesitter 分支与 markdown 注入、
-snippet 跳转、插件/nvim API 清单、键位齐全等）。退出码 `0` = 全部通过，`1` = 有失败项。
+共 23 项，覆盖本项目所有历史 bug 的回归（高亮、自动缩进、手动格式化、跳转返回、treesitter 分支与 markdown 注入、
+snippet 跳转、可视模式包裹、插件/nvim API 清单、键位齐全等）。退出码 `0` = 全部通过，`1` = 有失败项。
 
 ## 3. 已踩过的坑（**不要重犯**）
 
@@ -93,6 +93,33 @@ snippet 跳转、插件/nvim API 清单、键位齐全等）。退出码 `0` = �
 9. **`gt` 是内置的「下一个标签页」**，不要拿去做 LSP 跳转（类型定义在 `<leader>ct`）。
 10. **远端可能有人工提交**：push 前先 `git fetch`，`git rebase origin/main` 后再 push，
     **禁止 force push**（会毁掉用户自己的提交）。
+11. **lazy.nvim 的 `keys`：每个键必须单独写一个 table**
+    解析逻辑在 `lazy.nvim/lua/lazy/core/handler/keys.lua` 的 `M.parse`：
+    ```lua
+    ret.lhs = ret[1] or ""   -- 只取第 1 个元素当键
+    ret.rhs = ret[2]         -- 第 2 个元素是 rhs（映射目标/函数）
+    ```
+    所以 `keys = { { "S", "gS", mode = "x" } }` 会被理解成「lhs=`S`，rhs=`gS`」**一把键**，
+    `gS` 静默失效（实测 `lazy.core.handler.handlers.keys:have("gS","x")` 返回 false）。
+    正确写法是每键一个 table：
+    ```lua
+    keys = {
+      { "S",  mode = "x", desc = "包裹选中文本" },
+      { "gS", mode = "x", desc = "换行包裹选中文本" },
+    }
+    ```
+    另外「字符串形式的键位」只在**普通模式**注册（`M.resolve` 里 `value.mode = value.mode or "n"`），
+    想让某个键在可视模式也能触发懒加载，必须写成带 `mode` 的 table。
+12. **可视模式包裹：`S` / `gS` 的懒加载触发键不能删**（`plugins/editing.lua`）
+    这是用户明确要的功能（「选中一段文字用快捷键包大括号」）。注意两点：
+    - `S` 在可视模式**没被注册**时会被 flash.nvim 接管（`plugins/flash.lua` 把 `S` 声明为 `n/x/o`
+      的 treesitter 搜索），表现为「按 S 毫无反应/进了搜索」，很容易误判成 surround 坏了；
+    - **不要用 `maparg("S","x")` 判断这个功能是否正常**：healthcheck 前面会把插件真正加载进来，
+      那时 `S` 一定存在，检查会假绿。真正的判别器是 **`gS`**（flash 不占它），
+      所以 `scripts/healthcheck.lua` 用 `require("lazy.core.handler").handlers.keys:have("gS","x")`。
+    - 已实测的写法：`viwS}`→`{foo}`、`viwS)`、`viwS]`、`viwS>`、`viwS"`/`S'`/`` S` ``、
+      `Stdiv<CR>`→`<div>foo</div>`、`Sth1 id="x"<CR>`、`V gS}`（换行包裹）。
+      `ysiw}`/`cs"'`/`ds"` 等普通模式键不变。
 
 ## 4. 怎么验证（沙箱套路）
 
@@ -141,6 +168,8 @@ nvim --headless "+luafile scripts/healthcheck.lua"      # 自检
   新文件（没有缩进线索时）默认用 Tab 缩进。
 - **`<C-s>` 保存**：部分终端默认把 Ctrl-S 当流控（XOFF）吞掉，需要在 shell 里 `stty -ixon`。
 - **`s` / `S` 被 flash.nvim 占用**：内置的「替换字符 / 整行替换」被覆盖（老配置即如此）。
+  其中 **`S` 只在普通模式是 flash**；可视模式的 `S` 归 nvim-surround（包裹选区，用户要求，见坑 12），
+  可视模式的 flash treesitter 搜索因此不可用。
 - **cmp `sources` 顺序**是 `buffer` → `path` → `luasnip` → `nvim_lsp`，buffer 可能排在 LSP 前面。
 - **markdown-preview 首次使用需要 `:MarkdownPreviewInstall`**；LuaSnip 的 `jsregexp`
   未编译（可选组件，只影响少数正则类 snippet）。

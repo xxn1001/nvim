@@ -107,7 +107,7 @@ nvim --headless "+luafile scripts/healthcheck.lua"
 | `<leader>ww` / `<leader>w=` | 切到下一个窗口 / 所有窗口等宽等高 |
 | `<leader>wH` `wJ` `wK` `wL` | 把**当前窗口**挪到最 左/下/上/右（不是分屏；只有一个窗口时会提示先分屏） |
 | `<C-Up>` `<C-Down>` `<C-Left>` `<C-Right>` | 调整窗口大小 |
-| `<C-h>` `<C-j>` `<C-k>` `<C-l>` | 聚焦 左/下/上/右 窗口（详见 3.6） |
+| `<C-h>` `<C-j>` `<C-k>` `<C-l>` | 聚焦 左/下/上/右 窗口（详见 3.7） |
 | `<leader>qs` / `<leader>ql` / `<leader>qd` | 恢复会话 / 恢复上次会话 / 本次不保存会话 |
 | `<leader>fp` | 切换项目 |
 | `<leader><tab>` 等 | 见 which-key 弹窗 |
@@ -119,20 +119,56 @@ nvim --headless "+luafile scripts/healthcheck.lua"
 | `j` / `k` | 上下移动（软换行下按显示行移动） |
 | `<A-j>` / `<A-k>` | 上移 / 下移当前行（可视模式=选区），并自动重排缩进 |
 | `<A-h>` / `<A-l>` | 减少 / 增加缩进（可视模式=整块左右移动） |
-| `cs` / `ds` / `ys` | nvim-surround：改 / 删 / 加环绕 |
+| `cs` / `ds` / `ys` | nvim-surround：改 / 删 / 加环绕（普通模式；可视模式见 3.3 的 `S`） |
 | `]c` / `[c` | 跳到下 / 上一个 git 修改块 |
 | `<leader>hp` / `<leader>hi` | 预览 hunk / 行内预览 hunk |
 | `<leader>hb` / `<leader>ht` / `<leader>hw` | blame 弹窗 / 切换行内 blame / 单词差异 |
 | `<leader>hd` / `<leader>hD` | 与索引 / 与 HEAD 比较 |
 | `<leader>hq` / `<leader>hQ` | 当前文件 / 全部变更进 quickfix |
 | `ih`（可视/操作符模式） | 选择 git hunk |
-| `s` / `S` | flash 跳转 / flash treesitter 跳转 |
+| `s` / `S` | flash 跳转 / flash treesitter 跳转（**`S` 仅普通模式**） |
 | `zR` / `zM` | 展开全部折叠 / 折叠全部 |
 | `K` | 查看折叠内容，否则显示悬浮文档 |
 | `<leader>ss` / `<leader>sd` / `<leader>sh` | 拼写检查 / 语法诊断 / 形参提示(inlay hint) 开关 |
 | `<leader>cs` | 符号面板（Aerial） |
 
-### 3.3 格式化（★ 本次改为主动触发）
+### 3.3 可视模式速查（先选中，再按键）
+
+选中文本后可以对它做的操作：
+
+| 键 | 功能 |
+| --- | --- |
+| **`S`** | **包裹选中文本**，然后输入配对符：`}` `)` `]` `"` `'` `` ` ``… 例：选中 `foo` 按 `S}` → `{foo}` |
+| `gS` | 同上，但把内容换行包起来。例：`gS}` → `{` 换行 `foo` 换行 `}` |
+| `<leader>cf` | **只格式化选中的行**（不碰选区外） |
+| `<A-j>` / `<A-k>` | 选区整体上移 / 下移（自动重排缩进） |
+| `<A-h>` / `<A-l>` | 选区整体左移 / 右移 |
+| `gc` | 注释 / 取消注释选区（Neovim 内置） |
+| `>` / `<` | 增加 / 减少缩进（内置，`gv` 可保持选中继续操作） |
+| `ga` / `gA` | mini.align 对齐选区 / 带预览对齐 |
+| `s` / `S`（X 模式） | flash 跳转 |
+
+用 surround 的完整写法（按 `S` 进入待输入状态后可以给更多信息）：
+
+| 输入 | `foo` 的结果 | 说明 |
+| --- | --- | --- |
+| `S}` | `{foo}` | 大括号 |
+| `S)` `S]` `S>` | `(foo)` `[foo]` `<foo>` | 其它配对符 |
+| `S"` `S'` `` S` `` | `"foo"` `'foo'` `` `foo` `` | 引号 |
+| `Stdiv<CR>` | `<div>foo</div>` | HTML/XML 标签；`t` 之后输入标签名再回车 |
+| `Sth1 id="x"<CR>` | `<h1 id="x">foo</h1>` | 标签可以带属性 |
+
+> 完整的别名表（函数包裹 `f`、自定义配对 `i` 等）见 `:help nvim-surround`；
+> 上面只列了本仓库实测过的写法。
+>
+> 普通模式下的环绕键保持原样：`ys{motion}` 加环绕、`cs` 改环绕、`ds` 删环绕
+> （例：`ysiw}` 给当前单词包大括号、`cs"'` 把双引号改成单引号、`ds"` 删掉双引号）。
+>
+> ⚠️ **取舍**：可视模式的 `S` 原来被 flash.nvim 占作「treesitter 搜索」；为了能直接包裹选中
+> 文本，现在可视模式的 `S` 归 nvim-surround（这是更常用的操作）。flash 的跳转 `s`、
+> 操作符模式的 `r`/`R` 都不受影响。
+
+### 3.4 格式化（★ 本次改为主动触发）
 
 | 键 | 功能 |
 | --- | --- |
@@ -142,7 +178,7 @@ nvim --headless "+luafile scripts/healthcheck.lua"
 > 跑 ruff_fix / goimports / clang-format 等，可能删掉未使用的 import / include 或
 > 重排头文件，多次保存下来会改坏代码，所以改成只在你按 `<leader>cf` 时执行。
 
-### 3.4 跳转（★ 返回上一个位置）
+### 3.5 跳转（★ 返回上一个位置）
 
 | 键 | 功能 |
 | --- | --- |
@@ -155,7 +191,7 @@ nvim --headless "+luafile scripts/healthcheck.lua"
 > 跳转函数（`lua/util/jump.lua`）会同时写入 jumplist 和 tagstack，所以上面三个返回键都可用。
 > 光标在符号上时用 `<C-o>` 返回是最快的，不需要手动翻文件。
 
-### 3.5 LSP
+### 3.6 LSP
 
 | 键 | 功能 |
 | --- | --- |
@@ -176,7 +212,7 @@ nvim --headless "+luafile scripts/healthcheck.lua"
 > 若提示「当前缓冲区没有 LSP 客户端」，说明对应 server 没起来：
 > `:Mason` 看是否安装、`:LspInfo` 看是否附着、`:checkhealth vim.lsp` 看报错。
 
-### 3.6 窗口 / 面板之间切换焦点
+### 3.7 窗口 / 面板之间切换焦点
 
 | 键 | 功能 |
 | --- | --- |
@@ -195,7 +231,7 @@ nvim --headless "+luafile scripts/healthcheck.lua"
 | Telescope `<leader>ci`/`cG`/`ff`… | `<leader>ci` 等 | **`<Esc>`** 直接关闭并回到代码 | 焦点在搜索框（插入模式）：`<C-n>`/`<C-p>` 上下选择、`<CR>` 打开选中项 |
 | LSP 跳转 `gd`/`gD` | — | `<C-o>` 返回、`<C-i>` 前进 | 见 3.4 |
 
-### 3.7 插件自带 / 其它
+### 3.8 插件自带 / 其它
 
 | 键 / 命令 | 功能 |
 | --- | --- |
@@ -221,6 +257,7 @@ nvim --headless "+luafile scripts/healthcheck.lua"
 | 6 | 函数补全后**残留的形参删不掉**（如 `kill(a, int sig)` 里的 `int sig`） | clangd 的函数补全带 snippet 占位符 `kill(${1:__pid_t pid}, ${2:int sig})`，**占位符是真实文本**；而配置里 `<Tab>` 只映射到 cmp 的「选下一个候选」，菜单关掉后 cmp 会 fallback 成插入 Tab —— 没有任何键能跳到下一个占位符 | `lua/plugins/completion.lua`：`<Tab>`/`<S-Tab>` 变为「补全菜单 → snippet 占位符跳转 → 主动补全 → 原生行为」，并以 `cmp.mapping.preset.insert()` 为基底（顺带找回 `<C-n>/<C-p>/<C-y>/<C-e>`）。活体实测：`kill(a, int sig)` 按 `<Tab>` → 选中 `int sig` → 输入 `b` → `kill(a, b)` |
 | 7 | 每次算折叠都报 `E5108: attempt to index field 'ufo'` | 老配置（nixvim 时代旧版 ufo）留下的 `foldmethod=expr` + `foldexpr=v:lua.vim.ufo.foldexpr()`；而 nvim-ufo 源码里**既没有 `vim.ufo` 也没有 `foldexpr`**，它靠 `foldtext` 接管折叠 | `config/options.lua` 删除这两行（ufo 官方最小配置只需要 `foldlevel`/`foldlevelstart`/`foldenable`），实测 `foldexpr` 恢复默认、`foldmethod=manual`、`zR`/`zM` 正常、无报错 |
 | 8 | 打开含代码块的 **markdown 文件反复报错**：`vim/treesitter.lua:197: attempt to call method 'range' (a nil value)`（栈里是 `query_predicates.lua:141` → `#set-lang-from-info-string!`） | nvim-treesitter **master 分支**（官方已冻结）注册的自定义 directive 与 nvim 0.12 的 query API 不兼容：`match[capture_id]` 不再是裸 TSNode，插件仍当成节点调用 `:range()` | **整体迁移到 main 分支**（详见下节）。main 不再注册任何自定义 predicate/directive，markdown 注入直接用 nvim 内置的 `@injection.language` 捕获 → 结构性问题消失 |
+| 9 | **选中一段文本后没法用快捷键包裹**（例如给选区包上大括号）：按 `S` 没反应 | `plugins/editing.lua` 里 nvim-surround 写成 `keys = { "cs", "ds", "ys" }`，而 lazy.nvim 对**字符串形式的键位只在普通模式**注册懒加载触发（`value.mode = value.mode or "n"`），可视模式下插件根本没被加载；同时 flash.nvim 把可视模式的 `S` 占作 treesitter 搜索 → 按 `S` 进了 flash 搜索 | 可视模式单独声明 `{ "S", mode = "x" }` / `{ "gS", mode = "x" }`（**每个键必须单独一个 table**，否则第 2 个元素会被当成 rhs）。实测 `viwS}` → `{foo}`、`viwS)` → `(foo)`、`VgS}` 换行包裹；顺带确认 `<leader>cf` 可视模式只格式化选中行（上下相邻行不受影响） |
 
 ### 为什么 nvim-treesitter 用 main 分支（而不是 master）
 
@@ -352,7 +389,7 @@ module 名取决于**插件所在的分支**，与 nvim 版本无关：
 :Lazy sync        " 或 :Lazy restore —— 会按 lazy-lock.json 切到 main 并重装 parser 到 stdpath('data')/site
 ```
 
-**Q：LSP 没反应 / 没有补全？****Q：LSP 没反应 / 没有补全？**
+**Q：LSP 没反应 / 没有补全？**
 `:Mason` 确认服务器已安装；`:LspInfo` 看当前 buffer 是否附着；`:checkhealth vim.lsp` 看具体报错。
 mason 的 bin 目录由 mason 自动加入 PATH，无需手动配置。
 
